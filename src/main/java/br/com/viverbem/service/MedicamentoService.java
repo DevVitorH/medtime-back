@@ -51,21 +51,59 @@ public class MedicamentoService {
     m.setUsuario(u); m.setNome(r.nome().trim()); m.setDose(r.dose().trim());
     m.setHorario(LocalTime.parse(r.horario())); m.setOrientacao(r.orientacao());
     m.setDataInicio(Fuso.hoje());
-    m.setDiasSemana(r.diasSemana().stream().map(DIAS::get).collect(Collectors.toCollection(HashSet::new)));
+    m.setDiasSemana(converterDias(r.diasSemana()));
     return res(meds.save(m), false);
+  }
+
+  /**
+   * Edita nome, dose, horário, orientação e dias. A dataInicio não muda.
+   * Limitação do MVP: os dias novos também valem para o cálculo dos dias passados no histórico.
+   */
+  public MedicamentoRes atualizar(Usuario u, Long id, MedicamentoReq r) {
+    Medicamento m = buscarDoUsuario(u, id);
+    m.setNome(r.nome().trim()); m.setDose(r.dose().trim());
+    m.setHorario(LocalTime.parse(r.horario())); m.setOrientacao(r.orientacao());
+    m.getDiasSemana().clear();
+    m.getDiasSemana().addAll(converterDias(r.diasSemana()));
+    return res(meds.save(m), tomadas.existsByMedicamentoIdAndData(id, Fuso.hoje()));
+  }
+
+  /**
+   * Exclusão que preserva o histórico: sem nenhuma tomada, apaga de vez;
+   * com tomadas, encerra ontem (some de hoje em diante, mas os dias passados continuam contando).
+   */
+  public void excluir(Usuario u, Long id) {
+    Medicamento m = buscarDoUsuario(u, id);
+    if (tomadas.existsByMedicamentoId(id)) {
+      m.setDataFim(Fuso.hoje().minusDays(1));
+      meds.save(m);
+    } else {
+      meds.delete(m); // o Hibernate apaga junto as linhas de medicamento_dia
+    }
   }
 
   public MedicamentoRes tomar(Usuario u, Long id, LocalDate data) {
     if (!data.equals(Fuso.hoje()))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Só é possível marcar o remédio de hoje.");
-    Medicamento m = meds.findByIdAndUsuarioId(id, u.getId())
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Remédio não encontrado."));
+    Medicamento m = buscarDoUsuario(u, id);
     if (!m.agendadoEm(data))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Este remédio não está agendado para hoje.");
     if (!tomadas.existsByMedicamentoIdAndData(id, data)) {
       Tomada t = new Tomada(); t.setMedicamento(m); t.setData(data); tomadas.save(t);
     }
     return res(m, true);
+  }
+
+  /** Remédio do usuário logado e ainda não encerrado; senão 404 (não revela remédio de outra pessoa). */
+  private Medicamento buscarDoUsuario(Usuario u, Long id) {
+    return meds.findByIdAndUsuarioId(id, u.getId())
+        .filter(m -> m.getDataFim() == null || !m.getDataFim().isBefore(Fuso.hoje()))
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Remédio não encontrado."));
+  }
+
+  /** ["SEG","QUA"] -> {MONDAY, WEDNESDAY} */
+  private Set<DayOfWeek> converterDias(List<String> siglas) {
+    return siglas.stream().map(DIAS::get).collect(Collectors.toCollection(HashSet::new));
   }
 
   private MedicamentoRes res(Medicamento m, boolean tomado) {

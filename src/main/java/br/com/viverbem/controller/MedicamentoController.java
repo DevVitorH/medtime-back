@@ -28,6 +28,17 @@ public class MedicamentoController {
     return service.criar(u, req);
   }
 
+  @PutMapping("/{id}")
+  public MedicamentoRes atualizar(@RequestAttribute("usuario") Usuario u, @PathVariable Long id,
+      @Valid @RequestBody MedicamentoReq req) {
+    return service.atualizar(u, id, req);
+  }
+
+  @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void excluir(@RequestAttribute("usuario") Usuario u, @PathVariable Long id) {
+    service.excluir(u, id);
+  }
+
   @PostMapping("/{id}/tomar")
   public MedicamentoRes tomar(@RequestAttribute("usuario") Usuario u, @PathVariable Long id,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data) {
