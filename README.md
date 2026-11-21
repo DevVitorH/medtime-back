@@ -3,9 +3,11 @@
 ## Rodar
 1. Java 17+ e Maven instalados. Crie o banco: `CREATE DATABASE viverbem;`.
    Copie `.env.example` para `.env` (nesta pasta) e preencha `DB_PASSWORD` (obrigatória) e, se quiser o
-   assistente de IA, `ANTHROPIC_API_KEY`. O `.env` não vai para o Git.
+   assistente de IA, `GEMINI_API_KEY`. O `.env` não vai para o Git.
    Variáveis definidas no sistema (ex.: `$env:DB_PASSWORD="..."` no PowerShell) têm prioridade sobre o `.env`.
-2. (Opcional, para o assistente) defina `ANTHROPIC_API_KEY` no ambiente do servidor. Sem ela, o assistente responde que não está configurado.
+2. (Opcional, para o assistente) crie uma chave gratuita do Google Gemini em aistudio.google.com e coloque em
+   `GEMINI_API_KEY`. O modelo padrão é `gemini-3.5-flash-lite` (troque com `GEMINI_MODEL`).
+   Sem a chave, `POST /api/assistente/perguntar` responde 503 com uma mensagem amigável.
 3. `mvn spring-boot:run`. A API sobe em `http://localhost:8080` e o Hibernate cria as tabelas sozinho (`ddl-auto=update`).
 Sem Maven instalado: abra a pasta no IntelliJ ou no VS Code (Extension Pack for Java), ou gere um projeto em start.spring.io para obter o `mvnw` e copie `src/` e `pom.xml` para ele.
 
