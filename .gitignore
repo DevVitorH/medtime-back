@@ -1,4 +1,34 @@
+# Compilação (Maven)
 target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Dependências de Node (caso alguém rode npm aqui por engano)
+node_modules/
+
+# IDEs
 .idea/
-*.log
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+
+# Variáveis de ambiente e segredos (nunca no Git)
 .env
+.env.*
+!.env.example
+
+# Logs e arquivos temporários
+*.log
+logs/
+*.tmp
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Configuração local do Claude Code (a compartilhada é .claude/settings.json)
+.claude/settings.local.json
