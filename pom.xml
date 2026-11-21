@@ -19,6 +19,8 @@
     <!-- Só o BCrypt para guardar a senha (sem o Spring Security completo). Versão gerenciada pelo Spring Boot. -->
     <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-crypto</artifactId></dependency>
     <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+    <!-- Só para os testes (mvn test): JUnit e AssertJ. Não vai para a API. -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
   </dependencies>
   <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
 </project>

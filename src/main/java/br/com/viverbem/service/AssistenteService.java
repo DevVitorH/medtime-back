@@ -1,9 +1,14 @@
 package br.com.viverbem.service;
 
+import static br.com.viverbem.dto.Dtos.MedicamentoRes;
+
+import br.com.viverbem.config.Fuso;
 import br.com.viverbem.model.Usuario;
-import br.com.viverbem.repository.MedicamentoRepository;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,22 +22,30 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * IA generativa (LLM via API do Google Gemini, plano gratuito): responde dúvidas usando a lista de
- * remédios do próprio usuário. A chave fica só no servidor (GEMINI_API_KEY). Nada da pergunta vai para o log.
+ * IA generativa (LLM via API do Google Gemini, plano gratuito): responde dúvidas sobre os remédios de HOJE.
+ * O contexto (data, hora, remédios e próximo remédio) é montado aqui no servidor, no fuso America/Fortaleza,
+ * com a mesma lista da tela inicial. A chave fica só no servidor (GEMINI_API_KEY). Nada da pergunta vai para o log.
  */
 @Service
 public class AssistenteService {
   static final String AVISO = "Informação de apoio. Confirme com seu médico ou farmacêutico.";
   private static final String URL = "https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent";
+  private static final Locale PT_BR = Locale.forLanguageTag("pt-BR"); // funciona no Java 17
+  private static final DateTimeFormatter AGORA = DateTimeFormatter.ofPattern("EEEE, dd/MM/yyyy, HH:mm", PT_BR);
+  private static final String REGRAS = "Você é o assistente do aplicativo ViverBem, para pessoas com 50 anos ou mais. "
+      + "Responda em português do Brasil, em no máximo 3 frases curtas, com palavras simples e sem termos técnicos. "
+      + "Responda SOMENTE com base nos dados fornecidos abaixo. Se a informação não estiver neles, diga que não sabe "
+      + "e sugira procurar o médico ou farmacêutico. Nunca invente horário, dose ou remédio. "
+      + "Nunca faça diagnóstico e nunca sugira mudar doses ou parar remédios: nesses casos, oriente a falar com o médico ou farmacêutico.";
 
   private final RestClient http;
-  private final MedicamentoRepository meds;
+  private final MedicamentoService medicamentos;
   private final String chave;
   private final String modelo;
 
-  public AssistenteService(MedicamentoRepository meds,
+  public AssistenteService(MedicamentoService medicamentos,
       @Value("${gemini.api-key:}") String chave, @Value("${gemini.model}") String modelo) {
-    this.meds = meds; this.chave = chave; this.modelo = modelo;
+    this.medicamentos = medicamentos; this.chave = chave; this.modelo = modelo;
     // Tempo limite para a API não ficar presa se o Gemini demorar.
     SimpleClientHttpRequestFactory fabrica = new SimpleClientHttpRequestFactory();
     fabrica.setConnectTimeout(Duration.ofSeconds(10));
@@ -42,12 +55,10 @@ public class AssistenteService {
 
   public String perguntar(Usuario u, String pergunta) {
     if (chave.isBlank()) throw naoConfigurado();
-    String lista = meds.findByUsuarioIdAndAtivoTrueOrderByHorario(u.getId()).stream()
-        .map(m -> m.getNome() + " (" + m.getDose() + ", às " + m.getHorario() + ")").collect(Collectors.joining("; "));
-    String sistema = "Você é o assistente do aplicativo ViverBem, para pessoas com 50 anos ou mais. "
-        + "Responda em português do Brasil, em no máximo 3 frases curtas, com palavras simples e sem termos técnicos. "
-        + "Nunca faça diagnóstico e nunca sugira mudar doses ou parar remédios: nesses casos, oriente a falar com o médico ou farmacêutico. "
-        + "Remédios do usuário: " + (lista.isBlank() ? "nenhum cadastrado" : lista) + ".";
+    // Mesma lista da tela inicial: só os remédios que valem hoje, já com o status calculado.
+    LocalDateTime agora = Fuso.agora();
+    List<MedicamentoRes> deHoje = medicamentos.listar(u, agora.toLocalDate());
+    String sistema = REGRAS + "\n\nDados do usuário:\n" + montarContexto(agora, deHoje);
     // Formato do generateContent: instrução de sistema + a pergunta do usuário.
     Map<String, Object> corpo = Map.of(
         "systemInstruction", Map.of("parts", List.of(Map.of("text", sistema))),
@@ -59,10 +70,10 @@ public class AssistenteService {
           .header("x-goog-api-key", chave) // no cabeçalho, para a chave não aparecer em URL nem em log
           .contentType(MediaType.APPLICATION_JSON).body(corpo).retrieve().body(Map.class);
     } catch (HttpClientErrorException e) {
-      if (e.getStatusCode().value() == 429) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+      int status = e.getStatusCode().value();
+      if (status == 429) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
           "O assistente recebeu muitas perguntas agora. Tente de novo mais tarde.");
-      if (e.getStatusCode().value() == 400 || e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403
-          || e.getStatusCode().value() == 404) throw naoConfigurado(); // chave ou modelo inválido
+      if (status == 400 || status == 401 || status == 403 || status == 404) throw naoConfigurado(); // chave ou modelo inválido
       throw indisponivel();
     } catch (RestClientException e) { // rede, tempo esgotado, erro 5xx do Gemini
       throw indisponivel();
@@ -73,7 +84,46 @@ public class AssistenteService {
     return texto + "\n\n" + AVISO;
   }
 
-  /** Junta o texto de todas as partes de todas as respostas (candidates[].content.parts[].text). */
+  /**
+   * Texto pronto que vai para a IA. Ex.: "Agora: sábado, 21/11/2026, 16:34.
+   * Remédios de hoje: 08:00 Losartana, 20mg (tomado às 08:05). Próximo remédio: ...".
+   * A lista já vem filtrada (só hoje) e em ordem de horário.
+   */
+  static String montarContexto(LocalDateTime agora, List<MedicamentoRes> deHoje) {
+    String lista = deHoje.isEmpty() ? "nenhum remédio agendado para hoje"
+        : deHoje.stream().map(m -> m.horario() + " " + nomeEDose(m) + " (" + situacao(m) + ")")
+            .collect(Collectors.joining("; "));
+    return "Agora: " + AGORA.format(agora) + ".\n"
+        + "Remédios de hoje: " + lista + ".\n"
+        + "Próximo remédio: " + proximo(deHoje) + ".";
+  }
+
+  /**
+   * Próximo remédio: o primeiro PENDENTE em ordem de horário (inclui o que ainda está dentro da tolerância);
+   * se não houver, o ATRASADO mais antigo; se não houver nada, "nenhum remédio pendente hoje".
+   */
+  static String proximo(List<MedicamentoRes> deHoje) {
+    return deHoje.stream().filter(m -> "PENDENTE".equals(m.status())).findFirst()
+        .map(m -> nomeEDose(m) + " às " + m.horario())
+        .or(() -> deHoje.stream().filter(m -> "ATRASADO".equals(m.status())).findFirst()
+            .map(m -> nomeEDose(m) + ", que era às " + m.horario() + " e está atrasado"))
+        .orElse("nenhum remédio pendente hoje");
+  }
+
+  private static String nomeEDose(MedicamentoRes m) { return m.nome() + ", " + m.dose(); }
+
+  /** Status em palavras (usa o status já calculado por MedicamentoService.calcularStatus). */
+  private static String situacao(MedicamentoRes m) {
+    String hora = m.tomadoEm() == null ? "" : " às " + m.tomadoEm();
+    return switch (m.status()) {
+      case "TOMADO" -> "tomado" + hora;
+      case "TOMADO_COM_ATRASO" -> "tomado" + hora + ", com atraso";
+      case "ATRASADO" -> "atrasado, ainda não tomado";
+      default -> "pendente";
+    };
+  }
+
+  /** Junta o texto de todas as partes da resposta (candidates[].content.parts[].text). */
   private static String juntarTextos(Map<?, ?> r) {
     if (r == null || !(r.get("candidates") instanceof List<?> candidatos)) return ""; // ex.: pergunta bloqueada
     StringBuilder sb = new StringBuilder();
