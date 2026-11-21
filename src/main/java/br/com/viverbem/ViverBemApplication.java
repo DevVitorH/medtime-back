@@ -1,0 +1,9 @@
+package br.com.viverbem;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class ViverBemApplication {
+  public static void main(String[] args) { SpringApplication.run(ViverBemApplication.class, args); }
+}
