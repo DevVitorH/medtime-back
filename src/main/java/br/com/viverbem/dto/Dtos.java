@@ -26,9 +26,8 @@ public final class Dtos {
       @NotNull(message = "Informe sua idade.") @Min(value = 1, message = "A idade deve ser de 1 a 120.")
       @Max(value = 120, message = "A idade deve ser de 1 a 120.") Integer idade) {}
 
-  public record SupervisorRes(String nome, String parentesco, boolean online) {}
   /** nome e idade podem vir nulos logo depois do cadastro. */
-  public record UsuarioRes(Long id, String nome, Integer idade, String email, SupervisorRes supervisor) {}
+  public record UsuarioRes(Long id, String nome, Integer idade, String email) {}
   public record AuthRes(String token, Instant expiraEm, UsuarioRes usuario) {}
 
   public record MedicamentoReq(
@@ -39,9 +38,12 @@ public final class Dtos {
       @NotEmpty(message = "Escolha pelo menos um dia.")
       List<@NotNull(message = "Dia da semana inválido.")
            @Pattern(regexp = "SEG|TER|QUA|QUI|SEX|SAB|DOM", message = "Dia da semana inválido.") String> diasSemana) {}
-  /** diasSemana sempre na ordem SEG → DOM. */
+  /**
+   * diasSemana sempre na ordem SEG → DOM. status = PENDENTE | ATRASADO | TOMADO | TOMADO_COM_ATRASO
+   * (calculado no servidor). tomadoEm = "HH:mm" da tomada naquela data, ou null.
+   */
   public record MedicamentoRes(Long id, String nome, String dose, String horario, String orientacao, boolean tomado,
-      List<String> diasSemana, LocalDate dataInicio) {}
+      List<String> diasSemana, LocalDate dataInicio, String status, String tomadoEm) {}
 
   public record DiaRes(int dia, String status) {}
   public record HistoricoRes(int diasSeguidos, int adesao, List<DiaRes> dias) {}
@@ -49,4 +51,12 @@ public final class Dtos {
   public record PerguntaReq(@NotBlank(message = "Digite sua dúvida.") @Size(max = 500, message = "Pergunta muito longa.") String pergunta) {}
   public record PerguntaRes(String resposta) {}
   public record ErroRes(String mensagem) {}
+
+  // Supervisão: vínculo entre dois usuários criado por código de convite.
+  public record CodigoRes(String codigo, Instant expiraEm) {}
+  public record ConectarReq(@NotBlank(message = "Digite o código.") String codigo) {}
+  /** Uma pessoa do outro lado do vínculo (só o nome, para expor o mínimo de dados). */
+  public record PessoaRes(Long vinculoId, Long usuarioId, String nome) {}
+  public record VinculosRes(List<PessoaRes> supervisores, List<PessoaRes> dependentes) {}
+  public record ResumoRes(String nome, LocalDate data, List<MedicamentoRes> medicamentos, int diasSeguidos, int adesao) {}
 }

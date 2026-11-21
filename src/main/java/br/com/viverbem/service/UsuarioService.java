@@ -3,7 +3,6 @@ package br.com.viverbem.service;
 import static br.com.viverbem.dto.Dtos.*;
 
 import br.com.viverbem.model.Usuario;
-import br.com.viverbem.repository.SupervisorRepository;
 import br.com.viverbem.repository.UsuarioRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,18 +11,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UsuarioService {
   private final UsuarioRepository usuarios;
-  private final SupervisorRepository supervisores;
 
-  public UsuarioService(UsuarioRepository usuarios, SupervisorRepository supervisores) {
-    this.usuarios = usuarios; this.supervisores = supervisores;
-  }
+  public UsuarioService(UsuarioRepository usuarios) { this.usuarios = usuarios; }
 
   /** Monta a resposta JSON do usuário (sem senha, sem token). */
-  @Transactional(readOnly = true)
   public UsuarioRes dados(Usuario u) {
-    SupervisorRes sup = supervisores.findFirstByUsuarioId(u.getId())
-        .map(s -> new SupervisorRes(s.getNome(), s.getParentesco(), s.isOnline())).orElse(null);
-    return new UsuarioRes(u.getId(), u.getNome(), u.getIdade(), u.getEmail(), sup);
+    return new UsuarioRes(u.getId(), u.getNome(), u.getIdade(), u.getEmail());
   }
 
   @Transactional

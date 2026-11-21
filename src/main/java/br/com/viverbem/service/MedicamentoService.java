@@ -8,12 +8,15 @@ import br.com.viverbem.model.*;
 import br.com.viverbem.repository.*;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,6 +32,10 @@ public class MedicamentoService {
   private static final Map<DayOfWeek, String> SIGLAS = DIAS.entrySet().stream()
       .collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey));
 
+  /** Minutos depois do horário em que o remédio ainda conta como "no horário". */
+  public static final int TOLERANCIA_MIN = 30;
+  private static final DateTimeFormatter HORA = DateTimeFormatter.ofPattern("HH:mm");
+
   private final MedicamentoRepository meds;
   private final TomadaRepository tomadas;
 
@@ -36,14 +43,29 @@ public class MedicamentoService {
     this.meds = meds; this.tomadas = tomadas;
   }
 
-  /** Só os remédios agendados para aquela data, em ordem de horário, com "tomado" daquela data. */
+  /** Só os remédios agendados para aquela data, em ordem de horário, com o status daquela data. */
   @Transactional(readOnly = true)
   public List<MedicamentoRes> listar(Usuario u, LocalDate data) {
-    Set<Long> tomados = tomadas.findByMedicamentoUsuarioIdAndData(u.getId(), data).stream()
-        .map(t -> t.getMedicamento().getId()).collect(Collectors.toSet());
+    Map<Long, Tomada> tomadasDoDia = tomadas.findByMedicamentoUsuarioIdAndData(u.getId(), data).stream()
+        .collect(Collectors.toMap(t -> t.getMedicamento().getId(), Function.identity()));
+    LocalDateTime agora = Fuso.agora();
     return meds.findByUsuarioIdAndAtivoTrueOrderByHorario(u.getId()).stream()
         .filter(m -> m.agendadoEm(data))
-        .map(m -> res(m, tomados.contains(m.getId()))).toList();
+        .map(m -> res(m, data, tomadasDoDia.get(m.getId()), agora)).toList();
+  }
+
+  /**
+   * Regra única do status de um remédio numa data (o front só exibe). Limite = horário + TOLERANCIA_MIN.
+   * Tomou até o limite (ou tomada antiga sem hora) = TOMADO; tomou depois = TOMADO_COM_ATRASO;
+   * não tomou e agora já passou do limite = ATRASADO (vale também para dia passado); senão PENDENTE.
+   */
+  public static String calcularStatus(Medicamento m, LocalDate data, Tomada tomada, LocalDateTime agora) {
+    LocalDateTime limite = data.atTime(m.getHorario()).plusMinutes(TOLERANCIA_MIN);
+    if (tomada != null) {
+      boolean comAtraso = tomada.getTomadoEm() != null && tomada.getTomadoEm().isAfter(limite);
+      return comAtraso ? "TOMADO_COM_ATRASO" : "TOMADO";
+    }
+    return agora.isAfter(limite) ? "ATRASADO" : "PENDENTE";
   }
 
   public MedicamentoRes criar(Usuario u, MedicamentoReq r) {
@@ -52,7 +74,7 @@ public class MedicamentoService {
     m.setHorario(LocalTime.parse(r.horario())); m.setOrientacao(r.orientacao());
     m.setDataInicio(Fuso.hoje());
     m.setDiasSemana(converterDias(r.diasSemana()));
-    return res(meds.save(m), false);
+    return res(meds.save(m), Fuso.hoje(), null, Fuso.agora());
   }
 
   /**
@@ -65,7 +87,8 @@ public class MedicamentoService {
     m.setHorario(LocalTime.parse(r.horario())); m.setOrientacao(r.orientacao());
     m.getDiasSemana().clear();
     m.getDiasSemana().addAll(converterDias(r.diasSemana()));
-    return res(meds.save(m), tomadas.existsByMedicamentoIdAndData(id, Fuso.hoje()));
+    LocalDate hoje = Fuso.hoje();
+    return res(meds.save(m), hoje, tomadas.findByMedicamentoIdAndData(id, hoje).orElse(null), Fuso.agora());
   }
 
   /**
@@ -88,10 +111,11 @@ public class MedicamentoService {
     Medicamento m = buscarDoUsuario(u, id);
     if (!m.agendadoEm(data))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Este remédio não está agendado para hoje.");
-    if (!tomadas.existsByMedicamentoIdAndData(id, data)) {
-      Tomada t = new Tomada(); t.setMedicamento(m); t.setData(data); tomadas.save(t);
-    }
-    return res(m, true);
+    // A hora da tomada é sempre a do servidor (Tomada.tomadoEm); nunca vem do cliente.
+    Tomada t = tomadas.findByMedicamentoIdAndData(id, data).orElseGet(() -> {
+      Tomada nova = new Tomada(); nova.setMedicamento(m); nova.setData(data); return tomadas.save(nova);
+    });
+    return res(m, data, t, Fuso.agora());
   }
 
   /** Remédio do usuário logado e ainda não encerrado; senão 404 (não revela remédio de outra pessoa). */
@@ -106,10 +130,12 @@ public class MedicamentoService {
     return siglas.stream().map(DIAS::get).collect(Collectors.toCollection(HashSet::new));
   }
 
-  private MedicamentoRes res(Medicamento m, boolean tomado) {
+  /** tomada = registro daquela data, ou null se não tomou. */
+  private MedicamentoRes res(Medicamento m, LocalDate data, Tomada tomada, LocalDateTime agora) {
     List<String> dias = Arrays.stream(DayOfWeek.values()) // MONDAY ... SUNDAY = SEG ... DOM
         .filter(m.getDiasSemana()::contains).map(SIGLAS::get).toList();
+    String tomadoEm = tomada == null || tomada.getTomadoEm() == null ? null : tomada.getTomadoEm().format(HORA);
     return new MedicamentoRes(m.getId(), m.getNome(), m.getDose(), m.getHorario().toString(), m.getOrientacao(),
-        tomado, dias, m.getDataInicio());
+        tomada != null, dias, m.getDataInicio(), calcularStatus(m, data, tomada, agora), tomadoEm);
   }
 }
