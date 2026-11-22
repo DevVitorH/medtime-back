@@ -1,4 +1,4 @@
-# ViverBem API (Spring Boot 4 + Hibernate + PostgreSQL)
+# MedTime API (Spring Boot 4 + Hibernate + PostgreSQL)
 
 ## Rodar
 1. Java 17+ e Maven instalados. Crie o banco: `CREATE DATABASE viverbem;`.
@@ -26,3 +26,9 @@ No app, `EXPO_PUBLIC_USE_MOCK=false` e `EXPO_PUBLIC_API_URL` apontando para esta
 Dois ajustes de uma linha no front (a data "de hoje" precisa ir também ao marcar como tomado):
 - `src/controllers/MedController.js`: `api.post(\`/api/medicamentos/${id}/tomar?data=${HOJE}\`)`
 - `src/services/mock.js`: regex `/^\/api\/medicamentos\/(\d+)\/tomar(\?.*)?$/`
+
+## Dívida técnica (opcional)
+O produto se chama **MedTime**, mas alguns identificadores técnicos mantêm o nome antigo de propósito, para não
+quebrar a API nem o banco perto da entrega: o pacote `br.com.viverbem`, a classe `ViverBemApplication`, o
+`groupId`/`artifactId` (`viverbem-api`), o `spring.application.name` e o banco `viverbem`.
+Renomear depois exige mover os pacotes, criar o banco novo e migrar os dados.

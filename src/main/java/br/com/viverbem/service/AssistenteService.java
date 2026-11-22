@@ -32,7 +32,7 @@ public class AssistenteService {
   private static final String URL = "https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent";
   private static final Locale PT_BR = Locale.forLanguageTag("pt-BR"); // funciona no Java 17
   private static final DateTimeFormatter AGORA = DateTimeFormatter.ofPattern("EEEE, dd/MM/yyyy, HH:mm", PT_BR);
-  private static final String REGRAS = "Você é o assistente do aplicativo ViverBem, para pessoas com 50 anos ou mais. "
+  private static final String REGRAS = "Você é o assistente do aplicativo MedTime, para pessoas com 50 anos ou mais. "
       + "Responda em português do Brasil, em no máximo 3 frases curtas, com palavras simples e sem termos técnicos. "
       + "Responda SOMENTE com base nos dados fornecidos abaixo. Se a informação não estiver neles, diga que não sabe "
       + "e sugira procurar o médico ou farmacêutico. Nunca invente horário, dose ou remédio. "
