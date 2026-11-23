@@ -113,13 +113,25 @@ public class VinculoService {
   /** Resumo do dia de um dependente. São dados de saúde: só para quem é supervisor dele (senão 403). */
   @Transactional(readOnly = true)
   public ResumoRes resumo(Usuario u, Long dependenteId, LocalDate data) {
-    if (!vinculos.existsByDependenteIdAndSupervisorId(dependenteId, u.getId()))
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Você não acompanha esta pessoa.");
-    Usuario dependente = usuarios.findById(dependenteId)
-        .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Você não acompanha esta pessoa."));
+    Usuario dependente = exigirVinculo(u, dependenteId);
     List<MedicamentoRes> remedios = medicamentoService.listar(dependente, data);
     HistoricoRes historico = historicoService.calcular(dependente.getId(), YearMonth.from(data), data);
     return new ResumoRes(dependente.getNome(), data, remedios, historico.diasSeguidos(), historico.adesao());
+  }
+
+  /** Calendário do mês de um dependente: a mesma regra e o mesmo formato de GET /api/historico. Só com vínculo. */
+  @Transactional(readOnly = true)
+  public HistoricoRes historico(Usuario u, Long dependenteId, YearMonth mes, LocalDate hoje) {
+    Usuario dependente = exigirVinculo(u, dependenteId);
+    return historicoService.calcular(dependente.getId(), mes, hoje);
+  }
+
+  /** Devolve o dependente se o usuário logado for supervisor dele; senão 403 (dado de saúde). */
+  private Usuario exigirVinculo(Usuario u, Long dependenteId) {
+    if (!vinculos.existsByDependenteIdAndSupervisorId(dependenteId, u.getId()))
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Você não acompanha esta pessoa.");
+    return usuarios.findById(dependenteId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "Você não acompanha esta pessoa."));
   }
 
   private String sortearCodigo() {
