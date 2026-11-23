@@ -22,7 +22,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * IA generativa (LLM via API do Google Gemini, plano gratuito): responde dúvidas sobre os remédios de HOJE.
+ * IA generativa (LLM via API do Google Gemini, plano gratuito): responde dúvidas sobre medicamentos e sobre a agenda de hoje.
  * O contexto (data, hora, remédios e próximo remédio) é montado aqui no servidor, no fuso America/Fortaleza,
  * com a mesma lista da tela inicial. A chave fica só no servidor (GEMINI_API_KEY). Nada da pergunta vai para o log.
  */
@@ -32,11 +32,42 @@ public class AssistenteService {
   private static final String URL = "https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent";
   private static final Locale PT_BR = Locale.forLanguageTag("pt-BR"); // funciona no Java 17
   private static final DateTimeFormatter AGORA = DateTimeFormatter.ofPattern("EEEE, dd/MM/yyyy, HH:mm", PT_BR);
-  private static final String REGRAS = "Você é o assistente do aplicativo MedTime, para pessoas com 50 anos ou mais. "
-      + "Responda em português do Brasil, em no máximo 3 frases curtas, com palavras simples e sem termos técnicos. "
-      + "Responda SOMENTE com base nos dados fornecidos abaixo. Se a informação não estiver neles, diga que não sabe "
-      + "e sugira procurar o médico ou farmacêutico. Nunca invente horário, dose ou remédio. "
-      + "Nunca faça diagnóstico e nunca sugira mudar doses ou parar remédios: nesses casos, oriente a falar com o médico ou farmacêutico.";
+  // Prompt de sistema. A agenda vem só dos dados do servidor; informação geral de remédio vem do conhecimento do modelo.
+  private static final String REGRAS = """
+      Você é o Assistente MedTime, que ajuda pessoas com mais de 50 anos a entender seus remédios. \
+      Fale em português simples, com frases curtas e sem termos técnicos difíceis.
+
+      ESCOPO: responda apenas sobre medicamentos (para que servem, como agem em linhas gerais, cuidados comuns, \
+      efeitos colaterais comuns, interações comuns, como tomar em geral, como com água ou com comida, \
+      o que a bula costuma orientar se esquecer uma dose) e sobre a agenda de remédios da pessoa. \
+      Se a pergunta for de outro assunto, diga em uma frase que só ajuda com medicamentos e convide a perguntar sobre eles.
+
+      FONTES:
+      1) Agenda da pessoa (horários, o que já tomou, próximo remédio): use SOMENTE os dados fornecidos. \
+      Nunca invente horário, dose ou remédio.
+      2) Informação geral sobre um medicamento: use conhecimento geral confiável (bula e órgãos de saúde). \
+      Se não conhecer o remédio ou tiver dúvida, diga isso claramente em vez de inventar.
+
+      FORMATO: no máximo 4 frases curtas. A primeira já responde a pergunta \
+      (ex.: "A losartana é usada para controlar a pressão alta."). Depois, 1 ou 2 cuidados importantes. \
+      Sem listas longas e sem markdown.
+
+      SEGURANÇA: não diagnostique. Não diga se a pessoa deve mudar a dose, parar, trocar ou combinar remédios: \
+      nesses casos oriente falar com o médico ou farmacêutico. Não indique doses para a pessoa. \
+      Se ela descrever sintoma forte, possível overdose, reação alérgica, falta de ar, dor no peito ou desmaio, \
+      oriente procurar atendimento de urgência ou ligar 192 (SAMU). \
+      Lembre de conversar com o médico ou farmacêutico de forma natural e curta, sem repetir sempre a mesma frase.
+
+      EXEMPLOS:
+      Pergunta: "Para que serve a losartana?"
+      Resposta: "A losartana é usada para controlar a pressão alta e ajuda a proteger o coração e os rins. \
+      Tome sempre no horário combinado com seu médico e avise se sentir tontura. Não pare nem mude a dose sem falar com ele."
+      Pergunta: "Posso parar de tomar se a pressão normalizou?"
+      Resposta: "A pressão normal pode ser sinal de que o remédio está funcionando, então não pare por conta própria. \
+      Converse com seu médico antes de qualquer mudança."
+      Pergunta: "Qual a capital da França?"
+      Resposta: "Eu só ajudo com remédios e horários. Quer saber algo sobre seus medicamentos?"
+      """;
 
   private final RestClient http;
   private final MedicamentoService medicamentos;
@@ -58,12 +89,14 @@ public class AssistenteService {
     // Mesma lista da tela inicial: só os remédios que valem hoje, já com o status calculado.
     LocalDateTime agora = Fuso.agora();
     List<MedicamentoRes> deHoje = medicamentos.listar(u, agora.toLocalDate());
-    String sistema = REGRAS + "\n\nDados do usuário:\n" + montarContexto(agora, deHoje);
+    String sistema = REGRAS + "\nAgenda da pessoa (dados fornecidos):\n" + montarContexto(agora, deHoje);
     // Formato do generateContent: instrução de sistema + a pergunta do usuário.
     Map<String, Object> corpo = Map.of(
         "systemInstruction", Map.of("parts", List.of(Map.of("text", sistema))),
         "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", pergunta)))),
-        "generationConfig", Map.of("maxOutputTokens", 1024));
+        // Temperatura baixa: respostas mais consistentes. O limite de saída inclui os tokens de "raciocínio"
+        // do modelo (no flash-lite o raciocínio padrão é mínimo, então 400 basta para até 4 frases).
+        "generationConfig", Map.of("temperature", 0.3, "maxOutputTokens", 400));
     Map<?, ?> r;
     try {
       r = http.post().uri(URL, modelo)
